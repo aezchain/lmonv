@@ -75,7 +75,7 @@ async function setupWelcomeMessage(client) {
         { name: 'Steps:', value: 
           '1. Click **Link Your Wallet** to register your wallet.\n' +
           '2. Complete the verification by sending the specified amount of $MON.\n' +
-          '3. Use **Refresh NFT Data** to update your roles based on NFTs.'
+          '3. Use **Update Holdings** to update your roles based on NFTs.'
         }
       )
       .setFooter({ text: 'Wallet Verification System • ' + new Date().toISOString() });
@@ -88,7 +88,7 @@ async function setupWelcomeMessage(client) {
     
     const refreshButton = new ButtonBuilder()
       .setCustomId('welcome_refresh_nft')
-      .setLabel('Refresh NFT Data')
+      .setLabel('Update Holdings')
       .setStyle(ButtonStyle.Secondary);
     
     const myWalletsButton = new ButtonBuilder()

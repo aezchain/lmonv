@@ -5,7 +5,7 @@ require('dotenv').config();
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('refresh-nft')
-    .setDescription('Refresh NFT data for your linked wallets'),
+    .setDescription('Update your NFT holdings and role status'),
   
   async execute(interaction) {
     await interaction.deferReply({ ephemeral: true });
