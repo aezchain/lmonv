@@ -1,8 +1,9 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Events } = require('discord.js');
+const { Client, GatewayIntentBits, Events, EmbedBuilder } = require('discord.js');
 const mongoose = require('mongoose');
 const commandHandler = require('./utils/commandHandler');
 const setupWelcomeMessage = require('./utils/setupWelcomeMessage');
+const { setUseInMemory } = require('./utils/verificationManager');
 
 const client = new Client({
   intents: [
@@ -13,17 +14,27 @@ const client = new Client({
 
 // Connect to MongoDB (optional - bot will still work without it for testing)
 try {
-  mongoose.connect(process.env.MONGODB_URI)
+  mongoose.connect(process.env.MONGODB_URI, {
+    serverSelectionTimeoutMS: 30000, // Increase timeout to 30 seconds
+    socketTimeoutMS: 45000,
+    connectTimeoutMS: 30000,
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+  })
     .then(() => {
       console.log('Connected to MongoDB');
     })
     .catch(err => {
       console.error('MongoDB connection error:', err);
-      console.log('Bot will continue without database functionality');
+      console.log('Bot will continue with in-memory storage');
+      // Activate in-memory storage mode
+      setUseInMemory(true);
     });
 } catch (error) {
   console.error('Error setting up MongoDB:', error);
-  console.log('Bot will continue without database functionality');
+  console.log('Bot will continue with in-memory storage');
+  // Activate in-memory storage mode
+  setUseInMemory(true);
 }
 
 // Set up commands
@@ -39,12 +50,27 @@ client.once(Events.ClientReady, async () => {
   } catch (error) {
     console.error('Error setting up welcome message:', error);
   }
+  
+  // Load pending verifications from database into memory
+  try {
+    const { loadVerificationsToCache, detectMongoDBStatus } = require('./utils/verificationManager');
+    const linkWalletCommand = require('./commands/linkWallet');
+    
+    if (linkWalletCommand && linkWalletCommand.activeVerifications) {
+      const count = await loadVerificationsToCache(linkWalletCommand.activeVerifications);
+      const dbStatus = detectMongoDBStatus();
+      console.log(`Loaded ${count} pending verifications into memory (using ${dbStatus.usingInMemory ? 'in-memory storage' : 'MongoDB'})`);
+    } else {
+      console.error('Could not access activeVerifications Map');
+    }
+  } catch (error) {
+    console.error('Error loading verifications from database:', error);
+  }
 });
 
-// Auto-check verification status every 20 seconds
+// Auto-check verification status every 5 seconds
 const { checkVerification } = require('./utils/verificationManager');
 const linkWalletCommand = require('./commands/linkWallet');
-const { EmbedBuilder } = require('discord.js');
 
 // Start an interval to check pending verifications
 setInterval(async () => {
@@ -80,61 +106,39 @@ setInterval(async () => {
       // Update the last status in our tracking
       verification.lastStatus = verificationStatus.status;
       
-      // If verification status changed from pending to verified, send a DM
+      // If verification status changed from pending to verified, handle verification
       if (previousStatus === 'pending' && verificationStatus.status === 'verified') {
         try {
-          // Send wallet linked confirmation DM
-          const user = await client.users.fetch(verification.userId);
+          // First assign the role if the user has an NFT
+          if (verificationStatus.hasNFT) {
+            try {
+              const guild = client.guilds.cache.get(process.env.GUILD_ID);
+              if (guild) {
+                const member = await guild.members.fetch(verification.userId);
+                const roleId = process.env.LIL_MONALIEN_ROLE_ID;
+                
+                if (member && roleId) {
+                  await member.roles.add(roleId);
+                  console.log(`Assigned role to ${member.user.tag}`);
+                }
+              }
+            } catch (roleError) {
+              console.error('Error assigning role:', roleError);
+            }
+          }
           
-          const linkedEmbed = new EmbedBuilder()
-            .setColor(0x00FF00)
-            .setTitle('Wallet Linked Successfully!')
-            .setDescription(`Your wallet has been successfully linked to your Discord account.`)
-            .addFields(
-              { name: 'Wallet Address', value: verification.address }
-            );
+          // Set a flag to indicate verification is complete
+          verification.verificationComplete = true;
+          console.log(`Marked verification as complete for user ${verification.userId}`);
           
-          await user.send({ embeds: [linkedEmbed] });
-          
-          // After wallet is linked, send a separate message about NFT status
-          const nftEmbed = new EmbedBuilder()
-            .setColor(verificationStatus.hasNFT ? 0x00FF00 : 0xFF0000)
-            .setTitle(verificationStatus.hasNFT ? 'NFT Detected!' : 'No NFT Found')
-            .setDescription(
-              verificationStatus.hasNFT 
-                ? `We found a Lil Monalien NFT in your wallet. You have been assigned the special role!` 
-                : `We couldn't find a Lil Monalien NFT in your wallet. If you purchase one later, use the /refresh-nft command.`
-            );
-          
-          await user.send({ embeds: [nftEmbed] });
-          
-          console.log(`Sent verification and NFT status DM to user ${verification.userId}`);
-        } catch (dmError) {
-          console.error('Error sending verification DM:', dmError);
+        } catch (notifyError) {
+          console.error('Error handling verification:', notifyError);
         }
       }
       
       // If verification is no longer pending, clean up
       if (verificationStatus.status !== 'pending') {
-        // If it's verified and has an NFT, assign the role
-        if (verificationStatus.status === 'verified' && verificationStatus.hasNFT) {
-          try {
-            const guild = client.guilds.cache.get(process.env.GUILD_ID);
-            if (guild) {
-              const member = await guild.members.fetch(verification.userId);
-              const roleId = process.env.LIL_MONALIEN_ROLE_ID;
-              
-              if (member && roleId) {
-                await member.roles.add(roleId);
-                console.log(`Assigned role to ${member.user.tag}`);
-              }
-            }
-          } catch (roleError) {
-            console.error('Error assigning role:', roleError);
-          }
-        }
-        
-        // Clear this verification from active checks
+        // We already handled role assignment above, so just clean up
         activeVerifications.delete(key);
         console.log(`Removed verification ${key} from active checks`);
       }
@@ -142,7 +146,7 @@ setInterval(async () => {
       console.error(`Error checking verification ${key}:`, error);
     }
   }
-}, 20000); // Check every 20 seconds
+}, 5000); // Check every 5 seconds
 
 // Login to Discord with your client's token
 client.login(process.env.DISCORD_TOKEN); 

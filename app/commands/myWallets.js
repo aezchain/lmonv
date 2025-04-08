@@ -10,6 +10,7 @@ module.exports = {
     await interaction.deferReply({ ephemeral: true });
     
     try {
+      // Get wallets from database
       const wallets = await getUserWallets(interaction.user.id);
       
       if (wallets.length === 0) {
@@ -59,10 +60,10 @@ module.exports = {
     try {
       const address = interaction.customId.substring('remove_wallet_'.length);
       
-      // Remove the wallet
+      // Remove the wallet from database
       await removeWallet(interaction.user.id, address);
       
-      // Get updated wallet list
+      // Get updated wallet list from database
       const updatedWallets = await getUserWallets(interaction.user.id);
       
       if (updatedWallets.length === 0) {

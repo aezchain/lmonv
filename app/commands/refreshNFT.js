@@ -5,12 +5,13 @@ require('dotenv').config();
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('refresh-nft')
-    .setDescription('Update your NFT holdings and role status'),
+    .setDescription('Check your wallet(s) for NFT holdings again'),
   
   async execute(interaction) {
     await interaction.deferReply({ ephemeral: true });
     
     try {
+      // Refresh NFT status in the database
       const refreshResult = await refreshNFTStatus(interaction.user.id);
       
       const embed = new EmbedBuilder()
@@ -31,8 +32,7 @@ module.exports = {
       // If NFT found, assign the role
       if (refreshResult.hasAnyNFT) {
         try {
-          const guild = interaction.guild;
-          const member = guild.members.cache.get(interaction.user.id);
+          const member = interaction.guild.members.cache.get(interaction.user.id);
           const roleId = process.env.LIL_MONALIEN_ROLE_ID;
           
           if (member && roleId) {

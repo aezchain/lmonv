@@ -85,7 +85,32 @@ module.exports = (client) => {
           let embed;
           let components = [];
           
-          if (verificationStatus.status === 'pending') {
+          // Handle database connection errors
+          if (verificationStatus.error) {
+            embed = new EmbedBuilder()
+              .setColor(0xFF0000)
+              .setTitle('Database Connection Error')
+              .setDescription('We are having trouble connecting to our database at the moment. Please try again in a few minutes.')
+              .addFields(
+                { name: 'What to do', value: 'If this error persists, please contact an administrator.' }
+              );
+            
+            await interaction.editReply({ 
+              embeds: [embed],
+              components: []
+            });
+            return;
+          }
+          
+          // Check if verification was already completed in the background
+          let verificationAlreadyComplete = false;
+          if (linkWalletCommand && linkWalletCommand.activeVerifications) {
+            const verificationKey = `${interaction.user.id}_${walletIndex}`;
+            const verification = linkWalletCommand.activeVerifications.get(verificationKey);
+            verificationAlreadyComplete = verification && verification.verificationComplete;
+          }
+          
+          if (verificationStatus.status === 'pending' && !verificationAlreadyComplete) {
             // Still pending
             embed = new EmbedBuilder()
               .setColor(0xFFA500)
@@ -102,7 +127,7 @@ module.exports = (client) => {
               .setStyle(ButtonStyle.Primary);
             
             components.push(new ActionRowBuilder().addComponents(checkButton));
-          } else if (verificationStatus.status === 'verified') {
+          } else if (verificationStatus.status === 'verified' || verificationAlreadyComplete) {
             // Verification successful
             embed = new EmbedBuilder()
               .setColor(0x00FF00)
@@ -110,8 +135,7 @@ module.exports = (client) => {
               .setDescription(`Your wallet has been successfully verified.`)
               .addFields(
                 { name: 'Wallet Address', value: verificationStatus.address },
-                { name: 'NFT Status', value: verificationStatus.hasNFT ? 'Lil Monalien NFT detected! Role assigned.' : 'No Lil Monalien NFT found. You can use /refresh-nft later.' },
-                { name: 'Message Expiry', value: 'This message will automatically disappear in 20 minutes.' }
+                { name: 'NFT Status', value: verificationStatus.hasNFT ? 'Lil Monalien NFT detected! Role assigned.' : 'No Lil Monalien NFT found. You can use /refresh-nft later.' }
               );
             
             // Schedule this message to be deleted after 20 minutes
@@ -377,7 +401,7 @@ async function handleWalletModalSubmit(interaction, client) {
           { name: 'Wallet Address', value: verification.address },
           { name: 'Amount to Send', value: `${verification.verificationAmount} $MON` },
           { name: 'Time Limit', value: '10 minutes' },
-          { name: 'Note', value: 'Verification success or failure messages will automatically disappear after 20 minutes.' }
+          { name: 'Note', value: 'After sending the transaction, click the "Check Status" button below to verify your wallet.' }
         )
         .setFooter({ text: 'Lil Monaliens Verification Bot' });
       
@@ -390,7 +414,7 @@ async function handleWalletModalSubmit(interaction, client) {
       const row = new ActionRowBuilder().addComponents(checkButton);
       
       // Send the response
-      await interaction.editReply({
+      const reply = await interaction.editReply({
         embeds: [embed],
         components: [row]
       });
@@ -408,7 +432,10 @@ async function handleWalletModalSubmit(interaction, client) {
           address: verification.address,
           amount: verification.verificationAmount,
           startTime: Date.now(),
-          intervalId: null
+          intervalId: null,
+          interactionId: interaction.id,
+          channelId: interaction.channelId,
+          messageId: reply.id // Store the message ID for later reference
         });
         
         console.log(`Started verification for user ${interaction.user.id}, wallet ${verification.address}`);
@@ -422,10 +449,14 @@ async function handleWalletModalSubmit(interaction, client) {
     }
   } catch (error) {
     console.error('Error handling wallet modal submit:', error);
-    if (interaction.replied || interaction.deferred) {
-      await interaction.editReply('There was an error processing your request.');
-    } else {
-      await interaction.reply({ content: 'There was an error processing your request.', ephemeral: true });
+    try {
+      if (interaction.replied || interaction.deferred) {
+        await interaction.editReply('There was an error processing your request.');
+      } else {
+        await interaction.reply({ content: 'There was an error processing your request.', ephemeral: true });
+      }
+    } catch (replyError) {
+      console.error('Error replying to interaction:', replyError);
     }
   }
-} 
+}
