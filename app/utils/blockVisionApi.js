@@ -68,7 +68,7 @@ const checkNFTHoldings = async (address) => {
         let moreCollectionsExist = true;
         let emptyPageCount = 0; // Count consecutive empty pages
         
-        while (moreCollectionsExist && page <= 15) { // Add a hard limit of 15 pages
+        while (moreCollectionsExist && page <= 50) { // Increase maximum pages from 30 to 50
           console.log(`Checking ${section} NFTs - page ${page}...`);
           
           // Direct check using the API endpoint
@@ -207,8 +207,8 @@ const checkNFTHoldings = async (address) => {
         }
         
         // If we've reached the page limit, log it
-        if (page > 15) {
-          console.log(`Reached maximum page check limit (15). Stopping pagination.`);
+        if (page > 50) { // Update to match new limit
+          console.log(`Reached maximum page check limit (50). Stopping pagination.`);
         }
       }
       
@@ -247,7 +247,7 @@ const checkBlockchainForNFT = async (address, blockchain, options) => {
     let moreCollectionsExist = true;
     let emptyPageCount = 0; // Count consecutive empty pages
     
-    while (moreCollectionsExist && pageIndex <= 15) { // Add a hard limit of 15 pages
+    while (moreCollectionsExist && pageIndex <= 50) { // Increase maximum pages from 30 to 50
       console.log(`Checking page ${pageIndex} of NFTs on ${blockchain}...`);
       
       // Map blockchain names to their API endpoints
@@ -455,8 +455,8 @@ const checkBlockchainForNFT = async (address, blockchain, options) => {
     }
     
     // If we've reached the page limit, log it
-    if (pageIndex > 15) {
-      console.log(`Reached maximum page check limit (15). Stopping pagination.`);
+    if (pageIndex > 50) { // Update to match new limit
+      console.log(`Reached maximum page check limit (50). Stopping pagination.`);
     }
     
     // If we've checked all pages and found nothing, return false
