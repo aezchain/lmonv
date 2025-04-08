@@ -33,7 +33,7 @@ const startVerification = async (discordId, address) => {
   try {
     // Check if address is valid
     if (!address.match(/^0x[a-fA-F0-9]{40}$/)) {
-      throw new Error('Invalid Ethereum address format');
+      throw new Error('Invalid Monad address format');
     }
     
     address = address.toLowerCase();
@@ -159,23 +159,32 @@ const checkVerification = async (discordId, walletIndex) => {
   try {
     let user, wallet;
     
-    if (inMemoryStorage.isActive) {
-      // Using in-memory storage as fallback
-      user = inMemoryStorage.users.get(discordId);
+    // Check if the user already exists in in-memory storage first
+    const inMemoryUser = inMemoryStorage.users.get(discordId);
+    
+    if (inMemoryStorage.isActive || (inMemoryUser && inMemoryUser.wallets && inMemoryUser.wallets[walletIndex])) {
+      // Using in-memory storage by preference or because data is already there
+      user = inMemoryUser;
       
       if (!user || !user.wallets[walletIndex]) {
-        throw new Error('Verification not found');
+        throw new Error('Verification not found in memory');
       }
       
       wallet = user.wallets[walletIndex];
     } else {
-      // Use MongoDB if available
+      // Use MongoDB if available and data is not in memory
       try {
         // Get user from database
         user = await User.findOne({ discordId }).maxTimeMS(15000);
         
         if (!user || !user.wallets[walletIndex]) {
-          throw new Error('Verification not found');
+          // Check in-memory again before giving up, in case it was added after the initial check
+          if (inMemoryStorage.users.get(discordId)?.wallets?.[walletIndex]) {
+            inMemoryStorage.isActive = true;
+            return checkVerification(discordId, walletIndex);
+          }
+          
+          throw new Error('Verification not found in database');
         }
         
         wallet = user.wallets[walletIndex];
