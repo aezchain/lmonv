@@ -44,6 +44,7 @@ client.once(Events.ClientReady, async () => {
 // Auto-check verification status every 20 seconds
 const { checkVerification } = require('./utils/verificationManager');
 const linkWalletCommand = require('./commands/linkWallet');
+const { EmbedBuilder } = require('discord.js');
 
 // Start an interval to check pending verifications
 setInterval(async () => {
@@ -66,12 +67,52 @@ setInterval(async () => {
       console.log(`Checking verification for user ${verification.userId}, wallet index ${verification.walletIndex}`);
       console.log(`Looking for transaction of ${verification.amount} MON to address ${verification.address}`);
       
+      // Store previous status if exists
+      const previousStatus = verification.lastStatus || 'pending';
+      
       const verificationStatus = await checkVerification(
         verification.userId,
         verification.walletIndex
       );
       
       console.log(`Verification status: ${verificationStatus.status}`);
+      
+      // Update the last status in our tracking
+      verification.lastStatus = verificationStatus.status;
+      
+      // If verification status changed from pending to verified, send a DM
+      if (previousStatus === 'pending' && verificationStatus.status === 'verified') {
+        try {
+          // Send wallet linked confirmation DM
+          const user = await client.users.fetch(verification.userId);
+          
+          const linkedEmbed = new EmbedBuilder()
+            .setColor(0x00FF00)
+            .setTitle('Wallet Linked Successfully!')
+            .setDescription(`Your wallet has been successfully linked to your Discord account.`)
+            .addFields(
+              { name: 'Wallet Address', value: verification.address }
+            );
+          
+          await user.send({ embeds: [linkedEmbed] });
+          
+          // After wallet is linked, send a separate message about NFT status
+          const nftEmbed = new EmbedBuilder()
+            .setColor(verificationStatus.hasNFT ? 0x00FF00 : 0xFF0000)
+            .setTitle(verificationStatus.hasNFT ? 'NFT Detected!' : 'No NFT Found')
+            .setDescription(
+              verificationStatus.hasNFT 
+                ? `We found a Lil Monalien NFT in your wallet. You have been assigned the special role!` 
+                : `We couldn't find a Lil Monalien NFT in your wallet. If you purchase one later, use the /refresh-nft command.`
+            );
+          
+          await user.send({ embeds: [nftEmbed] });
+          
+          console.log(`Sent verification and NFT status DM to user ${verification.userId}`);
+        } catch (dmError) {
+          console.error('Error sending verification DM:', dmError);
+        }
+      }
       
       // If verification is no longer pending, clean up
       if (verificationStatus.status !== 'pending') {

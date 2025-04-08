@@ -21,6 +21,7 @@ module.exports = (client) => {
       // If the command has a button handler, add it to the list
       if ('buttonHandler' in command) {
         client.buttonHandlers.push(command.buttonHandler);
+        console.log(`Registered button handler for command: ${command.data.name}`);
       }
     } else {
       console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
@@ -158,6 +159,15 @@ module.exports = (client) => {
       return;
     }
     
+    // Handle remove wallet buttons
+    if (interaction.customId.startsWith('remove_wallet_')) {
+      const myWalletsCommand = client.commands.get('my-wallets');
+      if (myWalletsCommand && myWalletsCommand.buttonHandler) {
+        await myWalletsCommand.buttonHandler(interaction);
+      }
+      return;
+    }
+    
     // Handle other button interactions
     for (const handler of client.buttonHandlers) {
       try {
@@ -291,7 +301,7 @@ async function handleWelcomeButtons(interaction, client) {
         const wallets = await getUserWallets(interaction.user.id);
         
         // Create the response similar to the command
-        const { EmbedBuilder } = require('discord.js');
+        const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
         
         if (wallets.length === 0) {
           return interaction.editReply('You have no linked wallets. Use the Link Your Wallet button to link a wallet.');
@@ -300,8 +310,7 @@ async function handleWelcomeButtons(interaction, client) {
         const embed = new EmbedBuilder()
           .setColor(0x0099FF)
           .setTitle('Your Linked Wallets')
-          .setDescription('Here are all your verified wallets:')
-          .setFooter({ text: 'Use /remove-wallet to remove a wallet' });
+          .setDescription('Here are all your verified wallets:');
         
         // Add each wallet as a field
         wallets.forEach((wallet, index) => {
@@ -311,7 +320,20 @@ async function handleWelcomeButtons(interaction, client) {
           });
         });
         
-        await interaction.editReply({ embeds: [embed] });
+        // Create buttons for each wallet
+        const rows = wallets.map((wallet, index) => {
+          const removeButton = new ButtonBuilder()
+            .setCustomId(`remove_wallet_${wallet.address}`)
+            .setLabel(`Remove Wallet ${index + 1}`)
+            .setStyle(ButtonStyle.Danger);
+          
+          return new ActionRowBuilder().addComponents(removeButton);
+        });
+        
+        await interaction.editReply({ 
+          embeds: [embed],
+          components: rows
+        });
       } catch (error) {
         console.error('Error getting wallets:', error);
         await interaction.editReply(`Error: ${error.message}`);
