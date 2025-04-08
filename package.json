@@ -1,0 +1,24 @@
+{
+  "name": "lil-monaliens-verify",
+  "version": "1.0.0",
+  "description": "Discord bot for verifying wallet ownership and NFT holdings for Lil Monaliens",
+  "main": "app/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node app/index.js",
+    "dev": "node --watch app/index.js",
+    "deploy-commands": "node app/deploy-commands.js",
+    "test-api": "node app/utils/testBlockVisionApi.js",
+    "test-random": "node app/utils/getRandomAmount.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7",
+    "mongodb": "^6.15.0",
+    "mongoose": "^8.13.2",
+    "node-fetch": "^2.7.0"
+  }
+}
