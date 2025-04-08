@@ -29,17 +29,32 @@ module.exports = {
         });
       });
       
-      // If NFT found, assign the role
+      // If any NFTs were sold, add that information to the embed
+      if (refreshResult.soldNFTs && refreshResult.soldNFTs.length > 0) {
+        const soldAddresses = refreshResult.soldNFTs.map(nft => nft.address).join('\n');
+        embed.addFields({
+          name: '🚨 NFT Ownership Change Detected',
+          value: `The following wallet(s) previously had NFTs that are no longer detected:\n${soldAddresses}`
+        });
+      }
+      
+      const member = interaction.guild.members.cache.get(interaction.user.id);
+      const roleId = process.env.LIL_MONALIEN_ROLE_ID;
+      
+      // Handle role management based on NFT status
       if (refreshResult.hasAnyNFT) {
+        // If NFT found, assign the role
         try {
-          const member = interaction.guild.members.cache.get(interaction.user.id);
-          const roleId = process.env.LIL_MONALIEN_ROLE_ID;
-          
-          if (member && roleId) {
+          if (member && roleId && !member.roles.cache.has(roleId)) {
             await member.roles.add(roleId);
             embed.addFields({
               name: 'Role Assigned',
               value: 'You have been given the Lil Monalien role!'
+            });
+          } else if (member && roleId && member.roles.cache.has(roleId)) {
+            embed.addFields({
+              name: 'Role Status',
+              value: 'You already have the Lil Monalien role.'
             });
           }
         } catch (roleError) {
@@ -47,6 +62,23 @@ module.exports = {
           embed.addFields({
             name: 'Role Assignment Failed',
             value: 'There was an error assigning the role. Please contact an admin.'
+          });
+        }
+      } else {
+        // If no NFTs found, remove the role
+        try {
+          if (member && roleId && member.roles.cache.has(roleId)) {
+            await member.roles.remove(roleId);
+            embed.addFields({
+              name: 'Role Removed',
+              value: 'The Lil Monalien role has been removed as you no longer have the NFT.'
+            });
+          }
+        } catch (roleError) {
+          console.error('Error removing role:', roleError);
+          embed.addFields({
+            name: 'Role Removal Failed',
+            value: 'There was an error removing the role. Please contact an admin.'
           });
         }
       }

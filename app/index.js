@@ -66,6 +66,9 @@ client.once(Events.ClientReady, async () => {
   } catch (error) {
     console.error('Error loading verifications from database:', error);
   }
+
+  // Set up periodic NFT ownership verification (every 24 hours)
+  setupPeriodicNFTCheck(client);
 });
 
 // Auto-check verification status every 5 seconds
@@ -149,4 +152,79 @@ setInterval(async () => {
 }, 5000); // Check every 5 seconds
 
 // Login to Discord with your client's token
-client.login(process.env.DISCORD_TOKEN); 
+client.login(process.env.DISCORD_TOKEN);
+
+// Add this function at the end of the file
+const setupPeriodicNFTCheck = (client) => {
+  // Check NFT ownership every 24 hours
+  const ONE_DAY = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+  
+  async function checkAllUsersNFTOwnership() {
+    try {
+      console.log('Running scheduled NFT ownership verification for all users...');
+      
+      // Get the guild where the bot is operating
+      const guild = client.guilds.cache.first();
+      if (!guild) {
+        console.error('Error: Guild not found for NFT ownership check');
+        return;
+      }
+      
+      // Get the role ID from environment variables
+      const roleId = process.env.LIL_MONALIEN_ROLE_ID;
+      if (!roleId) {
+        console.error('Error: LIL_MONALIEN_ROLE_ID not set in environment variables');
+        return;
+      }
+      
+      // Get all members with the NFT role
+      const role = guild.roles.cache.get(roleId);
+      if (!role) {
+        console.error(`Error: Role with ID ${roleId} not found`);
+        return;
+      }
+      
+      // Get members with the role
+      const membersWithRole = role.members;
+      console.log(`Found ${membersWithRole.size} members with the NFT role`);
+      
+      // Check each member's NFT status
+      let roleRemovedCount = 0;
+      
+      for (const [memberId, member] of membersWithRole) {
+        try {
+          const { refreshNFTStatus } = require('./utils/verificationManager');
+          const refreshResult = await refreshNFTStatus(memberId);
+          
+          // If the user no longer has any NFTs, remove the role
+          if (!refreshResult.hasAnyNFT) {
+            console.log(`User ${member.user.tag} (${memberId}) no longer has NFTs. Removing role...`);
+            await member.roles.remove(roleId);
+            roleRemovedCount++;
+          }
+        } catch (error) {
+          // Skip users that don't have wallets registered, etc.
+          if (error.message === 'User not found' || error.message === 'No verified wallets found') {
+            console.log(`User ${member.user.tag} (${memberId}) doesn't have verified wallets. Removing role...`);
+            await member.roles.remove(roleId);
+            roleRemovedCount++;
+          } else {
+            console.error(`Error checking NFT status for user ${memberId}:`, error);
+          }
+        }
+      }
+      
+      console.log(`Scheduled NFT check complete. Removed roles from ${roleRemovedCount} users.`);
+    } catch (error) {
+      console.error('Error in scheduled NFT ownership check:', error);
+    }
+  }
+  
+  // Run the check once at startup
+  setTimeout(checkAllUsersNFTOwnership, 60000); // 1 minute after startup
+  
+  // Then schedule it to run every 24 hours
+  setInterval(checkAllUsersNFTOwnership, ONE_DAY);
+  
+  console.log('Scheduled NFT ownership verification set up (will run daily)');
+}; 

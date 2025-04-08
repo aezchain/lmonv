@@ -484,11 +484,17 @@ const refreshNFTStatus = async (discordId) => {
     }
     
     let hasAnyNFT = false;
+    const soldNFTs = []; // Track wallets that previously had an NFT but now don't
     
     // Check NFT status for each wallet
     for (const wallet of verifiedWallets) {
       try {
         console.log(`Refreshing NFT status for wallet: ${wallet.address}`);
+        
+        // Store previous NFT state
+        const previouslyHadNFT = wallet.hasNFT;
+        
+        // Check current NFT status
         const hasNFT = await checkNFTHoldings(wallet.address);
         wallet.hasNFT = hasNFT;
         
@@ -498,6 +504,16 @@ const refreshNFTStatus = async (discordId) => {
           hasAnyNFT = true;
         } else {
           console.log(`❌ NO NFT found for wallet ${wallet.address}`);
+          
+          // If they previously had an NFT but now don't, they likely sold it
+          if (previouslyHadNFT) {
+            console.log(`🚨 NFT SOLD DETECTION: Wallet ${wallet.address} previously had an NFT but now doesn't`);
+            soldNFTs.push({
+              address: wallet.address,
+              previousState: true,
+              currentState: false
+            });
+          }
         }
       } catch (error) {
         console.error(`Error checking NFT holdings for ${wallet.address}:`, error);
@@ -520,7 +536,8 @@ const refreshNFTStatus = async (discordId) => {
         address: wallet.address,
         hasNFT: wallet.hasNFT
       })),
-      hasAnyNFT
+      hasAnyNFT,
+      soldNFTs  // Include information about sold NFTs
     };
   } catch (error) {
     throw error;
