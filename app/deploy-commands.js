@@ -7,14 +7,18 @@ const commands = [];
 const commandsPath = path.join(__dirname, 'commands');
 const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
 
+// Only include admin commands 
+// Public commands will only be accessible via the welcome panel buttons
 for (const file of commandFiles) {
   const filePath = path.join(commandsPath, file);
   const command = require(filePath);
   
-  if ('data' in command) {
+  // Only deploy admin commands (dbStatus)
+  if ('data' in command && command.data.name === 'db-status') {
     commands.push(command.data.toJSON());
+    console.log(`Including admin command: ${command.data.name}`);
   } else {
-    console.log(`[WARNING] The command at ${filePath} is missing a required "data" property.`);
+    console.log(`Skipping public command: ${command.data?.name || file}`);
   }
 }
 

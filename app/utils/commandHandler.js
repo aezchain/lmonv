@@ -192,6 +192,103 @@ module.exports = (client) => {
       return;
     }
     
+    // Handle refresh NFT status button
+    if (interaction.customId.startsWith('refresh_nft_')) {
+      await interaction.deferReply({ ephemeral: true });
+      try {
+        // Call the refreshNFTStatus function directly
+        const { refreshNFTStatus } = require('../utils/verificationManager');
+        const refreshResult = await refreshNFTStatus(interaction.user.id);
+        
+        const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
+        const embed = new EmbedBuilder()
+          .setColor(refreshResult.hasAnyNFT ? 0x00FF00 : 0x0099FF)
+          .setTitle('NFT Status Updated')
+          .setDescription(refreshResult.hasAnyNFT 
+            ? '✅ Lil Monalien NFT found! You have been assigned the role.' 
+            : 'No Lil Monalien NFT found in your wallets.');
+        
+        // Add wallet details
+        refreshResult.wallets.forEach((wallet, index) => {
+          embed.addFields({
+            name: `Wallet ${index + 1}`,
+            value: `Address: ${wallet.address}\nNFT Status: ${wallet.hasNFT ? '✅ Lil Monalien NFT found' : '❌ No Lil Monalien NFT'}`
+          });
+        });
+        
+        // If any NFTs were sold, add that information to the embed
+        if (refreshResult.soldNFTs && refreshResult.soldNFTs.length > 0) {
+          const soldAddresses = refreshResult.soldNFTs.map(nft => nft.address).join('\n');
+          embed.addFields({
+            name: '🚨 NFT Ownership Change Detected',
+            value: `The following wallet(s) previously had NFTs that are no longer detected:\n${soldAddresses}`
+          });
+        }
+        
+        const member = interaction.guild.members.cache.get(interaction.user.id);
+        const roleId = process.env.LIL_MONALIEN_ROLE_ID;
+        
+        // Handle role management based on NFT status
+        if (refreshResult.hasAnyNFT) {
+          // If NFT found, assign the role
+          try {
+            if (member && roleId && !member.roles.cache.has(roleId)) {
+              await member.roles.add(roleId);
+              embed.addFields({
+                name: 'Role Assigned',
+                value: 'You have been given the Lil Monalien role!'
+              });
+            } else if (member && roleId && member.roles.cache.has(roleId)) {
+              embed.addFields({
+                name: 'Role Status',
+                value: 'You already have the Lil Monalien role.'
+              });
+            }
+          } catch (roleError) {
+            console.error('Error assigning role:', roleError);
+            embed.addFields({
+              name: 'Role Assignment Failed',
+              value: 'There was an error assigning the role. Please contact an admin.'
+            });
+          }
+        } else {
+          // If no NFTs found, remove the role
+          try {
+            if (member && roleId && member.roles.cache.has(roleId)) {
+              await member.roles.remove(roleId);
+              embed.addFields({
+                name: 'Role Removed',
+                value: 'The Lil Monalien role has been removed as you no longer have the NFT.'
+              });
+            }
+          } catch (roleError) {
+            console.error('Error removing role:', roleError);
+            embed.addFields({
+              name: 'Role Removal Failed',
+              value: 'There was an error removing the role. Please contact an admin.'
+            });
+          }
+        }
+        
+        // Add a button to go back to wallet list
+        const viewWalletsButton = new ButtonBuilder()
+          .setCustomId(`welcome_my_wallets`)
+          .setLabel('Back to Wallet List')
+          .setStyle(ButtonStyle.Secondary);
+          
+        const row = new ActionRowBuilder().addComponents(viewWalletsButton);
+        
+        await interaction.editReply({ 
+          embeds: [embed],
+          components: [row]
+        });
+      } catch (error) {
+        console.error('Error refreshing NFT status:', error);
+        await interaction.editReply(`Error: ${error.message}`);
+      }
+      return;
+    }
+    
     // Handle other button interactions
     for (const handler of client.buttonHandlers) {
       try {
@@ -223,131 +320,110 @@ async function handleWelcomeButtons(interaction, client) {
     
     if (buttonId === 'welcome_link_wallet') {
       // For link-wallet, create a modal interaction
-      const linkWalletCommand = client.commands.get('link-wallet');
-      if (linkWalletCommand) {
-        // Create a modal for the user to enter their wallet address
-        const modal = {
-          title: 'Enter Wallet Address',
-          custom_id: 'wallet_modal',
+      const modal = {
+        title: 'Enter Wallet Address',
+        custom_id: 'wallet_modal',
+        components: [{
+          type: 1,
           components: [{
-            type: 1,
-            components: [{
-              type: 4,
-              custom_id: 'wallet_address',
-              label: 'Your Monad Wallet Address',
-              style: 1,
-              min_length: 42,
-              max_length: 42,
-              placeholder: '0x...',
-              required: true
-            }]
+            type: 4,
+            custom_id: 'wallet_address',
+            label: 'Your Monad Wallet Address',
+            style: 1,
+            min_length: 42,
+            max_length: 42,
+            placeholder: '0x...',
+            required: true
           }]
-        };
-        
-        await interaction.showModal(modal);
-        return;
-      } else {
-        await interaction.reply({ content: 'Link wallet command not found.', ephemeral: true });
-      }
+        }]
+      };
+      
+      await interaction.showModal(modal);
+      return;
     } else if (buttonId === 'welcome_refresh_nft') {
-      // For refresh-nft, create a new interaction
-      const refreshNFTCommand = client.commands.get('refresh-nft');
-      if (refreshNFTCommand) {
-        await interaction.deferReply({ ephemeral: true });
-        try {
-          // Create a separate context for the command
-          const context = { 
-            user: interaction.user,
-            guild: interaction.guild,
-            client: client,
-            deferReply: async () => {}, // No-op since we already deferred
-            editReply: interaction.editReply.bind(interaction),
-            reply: interaction.editReply.bind(interaction)
-          };
-          
-          // Call the refreshNFTStatus function directly
-          const { refreshNFTStatus } = require('../utils/verificationManager');
-          const refreshResult = await refreshNFTStatus(interaction.user.id);
-          
-          // Handle the refresh result similar to the command
-          const { EmbedBuilder } = require('discord.js');
-          const embed = new EmbedBuilder()
-            .setColor(refreshResult.hasAnyNFT ? 0x00FF00 : 0x0099FF)
-            .setTitle('NFT Status Updated')
-            .setDescription(refreshResult.hasAnyNFT 
-              ? '✅ Lil Monalien NFT found! You have been assigned the role.' 
-              : 'No Lil Monalien NFT found in your wallets.');
-          
-          // Add wallet details
-          refreshResult.wallets.forEach((wallet, index) => {
-            embed.addFields({
-              name: `Wallet ${index + 1}`,
-              value: `Address: ${wallet.address}\nNFT Status: ${wallet.hasNFT ? '✅ Lil Monalien NFT found' : '❌ No Lil Monalien NFT'}`
-            });
+      // Handle the refresh NFT button directly
+      await interaction.deferReply({ ephemeral: true });
+      try {
+        // Call the refreshNFTStatus function directly
+        const { refreshNFTStatus } = require('../utils/verificationManager');
+        const refreshResult = await refreshNFTStatus(interaction.user.id);
+        
+        const { EmbedBuilder } = require('discord.js');
+        const embed = new EmbedBuilder()
+          .setColor(refreshResult.hasAnyNFT ? 0x00FF00 : 0x0099FF)
+          .setTitle('NFT Status Updated')
+          .setDescription(refreshResult.hasAnyNFT 
+            ? '✅ Lil Monalien NFT found! You have been assigned the role.' 
+            : 'No Lil Monalien NFT found in your wallets.');
+        
+        // Add wallet details
+        refreshResult.wallets.forEach((wallet, index) => {
+          embed.addFields({
+            name: `Wallet ${index + 1}`,
+            value: `Address: ${wallet.address}\nNFT Status: ${wallet.hasNFT ? '✅ Lil Monalien NFT found' : '❌ No Lil Monalien NFT'}`
           });
-          
-          // If any NFTs were sold, add that information to the embed
-          if (refreshResult.soldNFTs && refreshResult.soldNFTs.length > 0) {
-            const soldAddresses = refreshResult.soldNFTs.map(nft => nft.address).join('\n');
+        });
+        
+        // If any NFTs were sold, add that information to the embed
+        if (refreshResult.soldNFTs && refreshResult.soldNFTs.length > 0) {
+          const soldAddresses = refreshResult.soldNFTs.map(nft => nft.address).join('\n');
+          embed.addFields({
+            name: '🚨 NFT Ownership Change Detected',
+            value: `The following wallet(s) previously had NFTs that are no longer detected:\n${soldAddresses}`
+          });
+        }
+        
+        const member = interaction.guild.members.cache.get(interaction.user.id);
+        const roleId = process.env.LIL_MONALIEN_ROLE_ID;
+        
+        // Handle role management based on NFT status
+        if (refreshResult.hasAnyNFT) {
+          // If NFT found, assign the role
+          try {
+            if (member && roleId && !member.roles.cache.has(roleId)) {
+              await member.roles.add(roleId);
+              embed.addFields({
+                name: 'Role Assigned',
+                value: 'You have been given the Lil Monalien role!'
+              });
+            } else if (member && roleId && member.roles.cache.has(roleId)) {
+              embed.addFields({
+                name: 'Role Status',
+                value: 'You already have the Lil Monalien role.'
+              });
+            }
+          } catch (roleError) {
+            console.error('Error assigning role:', roleError);
             embed.addFields({
-              name: '🚨 NFT Ownership Change Detected',
-              value: `The following wallet(s) previously had NFTs that are no longer detected:\n${soldAddresses}`
+              name: 'Role Assignment Failed',
+              value: 'There was an error assigning the role. Please contact an admin.'
             });
           }
-          
-          const member = interaction.guild.members.cache.get(interaction.user.id);
-          const roleId = process.env.LIL_MONALIEN_ROLE_ID;
-          
-          // Handle role management based on NFT status
-          if (refreshResult.hasAnyNFT) {
-            // If NFT found, assign the role
-            try {
-              if (member && roleId && !member.roles.cache.has(roleId)) {
-                await member.roles.add(roleId);
-                embed.addFields({
-                  name: 'Role Assigned',
-                  value: 'You have been given the Lil Monalien role!'
-                });
-              } else if (member && roleId && member.roles.cache.has(roleId)) {
-                embed.addFields({
-                  name: 'Role Status',
-                  value: 'You already have the Lil Monalien role.'
-                });
-              }
-            } catch (roleError) {
-              console.error('Error assigning role:', roleError);
+        } else {
+          // If no NFTs found, remove the role
+          try {
+            if (member && roleId && member.roles.cache.has(roleId)) {
+              await member.roles.remove(roleId);
               embed.addFields({
-                name: 'Role Assignment Failed',
-                value: 'There was an error assigning the role. Please contact an admin.'
+                name: 'Role Removed',
+                value: 'The Lil Monalien role has been removed as you no longer have the NFT.'
               });
             }
-          } else {
-            // If no NFTs found, remove the role
-            try {
-              if (member && roleId && member.roles.cache.has(roleId)) {
-                await member.roles.remove(roleId);
-                embed.addFields({
-                  name: 'Role Removed',
-                  value: 'The Lil Monalien role has been removed as you no longer have the NFT.'
-                });
-              }
-            } catch (roleError) {
-              console.error('Error removing role:', roleError);
-              embed.addFields({
-                name: 'Role Removal Failed',
-                value: 'There was an error removing the role. Please contact an admin.'
-              });
-            }
+          } catch (roleError) {
+            console.error('Error removing role:', roleError);
+            embed.addFields({
+              name: 'Role Removal Failed',
+              value: 'There was an error removing the role. Please contact an admin.'
+            });
           }
-          
-          await interaction.editReply({ embeds: [embed] });
-        } catch (error) {
-          console.error('Error refreshing NFT:', error);
-          await interaction.editReply(`Error: ${error.message}`);
         }
-      } else {
-        await interaction.reply({ content: 'Refresh NFT command not found.', ephemeral: true });
+        
+        await interaction.editReply({ embeds: [embed] });
+      } catch (error) {
+        console.error('Error refreshing NFT:', error);
+        await interaction.editReply(`Error: ${error.message}`);
       }
+      return;
     } else if (buttonId === 'welcome_my_wallets') {
       // For my-wallets, create a new interaction
       await interaction.deferReply({ ephemeral: true });
@@ -376,14 +452,25 @@ async function handleWelcomeButtons(interaction, client) {
           });
         });
         
-        // Create buttons for each wallet
-        const rows = wallets.map((wallet, index) => {
+        // Create buttons for each wallet and add a refresh button
+        const rows = [];
+        
+        // Add a refresh button at the top
+        const refreshButton = new ButtonBuilder()
+          .setCustomId(`refresh_nft_${interaction.user.id}`)
+          .setLabel('Refresh NFT Status')
+          .setStyle(ButtonStyle.Primary);
+        
+        rows.push(new ActionRowBuilder().addComponents(refreshButton));
+        
+        // Add remove buttons for each wallet
+        wallets.forEach((wallet, index) => {
           const removeButton = new ButtonBuilder()
             .setCustomId(`remove_wallet_${wallet.address}`)
             .setLabel(`Remove Wallet ${index + 1}`)
             .setStyle(ButtonStyle.Danger);
           
-          return new ActionRowBuilder().addComponents(removeButton);
+          rows.push(new ActionRowBuilder().addComponents(removeButton));
         });
         
         await interaction.editReply({ 

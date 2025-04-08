@@ -70,7 +70,7 @@ async function setupWelcomeMessage(client) {
     const welcomeEmbed = new EmbedBuilder()
       .setColor(0x0099FF)
       .setTitle('Wallet Verification')
-      .setDescription('Link your wallet and check on-chain activity to receive roles.')
+      .setDescription('Link your wallet to join the Lil Monaliens community.')
       .addFields(
         { name: 'Steps:', value: 
           '1. Click **Link Your Wallet** to register your wallet.\n' +

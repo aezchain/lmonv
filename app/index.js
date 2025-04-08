@@ -3,7 +3,10 @@ const { Client, GatewayIntentBits, Events, EmbedBuilder } = require('discord.js'
 const mongoose = require('mongoose');
 const commandHandler = require('./utils/commandHandler');
 const setupWelcomeMessage = require('./utils/setupWelcomeMessage');
-const { setUseInMemory } = require('./utils/verificationManager');
+const { setUseInMemory, loadVerificationsToCache, detectMongoDBStatus } = require('./utils/verificationManager');
+const express = require('express');
+const app = express();
+const port = process.env.PORT || 3000;
 
 const client = new Client({
   intents: [
@@ -14,6 +17,7 @@ const client = new Client({
 
 // Connect to MongoDB (optional - bot will still work without it for testing)
 try {
+  console.log('Connecting to MongoDB...');
   mongoose.connect(process.env.MONGODB_URI, {
     serverSelectionTimeoutMS: 30000, // Increase timeout to 30 seconds
     socketTimeoutMS: 45000,
@@ -24,8 +28,39 @@ try {
     .then(() => {
       console.log('Connected to MongoDB');
     })
-    .catch(err => {
+    .catch(async err => {
       console.error('MongoDB connection error:', err);
+      
+      // Before activating in-memory storage, try to load existing users from database
+      try {
+        // Import the User model and verificationManager
+        const User = require('./models/User');
+        const { setUseInMemory } = require('./utils/verificationManager');
+        
+        // Try to load all users from the database
+        console.log('Attempting to load users from database before falling back to in-memory storage...');
+        const users = await User.find({});
+        
+        if (users && users.length > 0) {
+          console.log(`Successfully loaded ${users.length} users from database`);
+          
+          // Now load them into in-memory storage
+          const inMemoryStorage = require('./utils/verificationManager').inMemoryStorage;
+          if (inMemoryStorage) {
+            users.forEach(user => {
+              // Convert Mongoose document to plain object
+              const userObj = user.toObject();
+              inMemoryStorage.users.set(userObj.discordId, userObj);
+            });
+            console.log(`Loaded ${inMemoryStorage.users.size} users into in-memory storage`);
+          }
+        } else {
+          console.log('No users found in database');
+        }
+      } catch (loadError) {
+        console.error('Error loading users from database:', loadError);
+      }
+      
       console.log('Bot will continue with in-memory storage');
       // Activate in-memory storage mode
       setUseInMemory(true);
