@@ -3,7 +3,7 @@ const { Client, GatewayIntentBits, Events, EmbedBuilder } = require('discord.js'
 const mongoose = require('mongoose');
 const commandHandler = require('./utils/commandHandler');
 const setupWelcomeMessage = require('./utils/setupWelcomeMessage');
-const { setUseInMemory, loadVerificationsToCache, detectMongoDBStatus } = require('./utils/verificationManager');
+const { setUseInMemory, loadVerificationsToCache, detectMongoDBStatus, syncInMemoryToMongoDB } = require('./utils/verificationManager');
 const express = require('express');
 const app = express();
 const port = process.env.PORT || 3000;
@@ -15,61 +15,90 @@ const client = new Client({
   ]
 });
 
-// Connect to MongoDB (optional - bot will still work without it for testing)
-try {
-  console.log('Connecting to MongoDB...');
-  mongoose.connect(process.env.MONGODB_URI, {
-    serverSelectionTimeoutMS: 30000, // Increase timeout to 30 seconds
-    socketTimeoutMS: 45000,
-    connectTimeoutMS: 30000,
-    useNewUrlParser: true,
-    useUnifiedTopology: true
+// Connect to MongoDB with improved error handling and reconnection logic
+console.log('Connecting to MongoDB...');
+
+// Set up connection options with retry and reconnect
+const mongooseOptions = {
+  serverSelectionTimeoutMS: 30000, // Increase timeout to 30 seconds
+  socketTimeoutMS: 45000,
+  connectTimeoutMS: 30000,
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  // Add auto-reconnect options
+  autoReconnect: true,
+  reconnectTries: Number.MAX_VALUE, 
+  reconnectInterval: 1000
+};
+
+// Initialize a connection
+mongoose.connect(process.env.MONGODB_URI, mongooseOptions)
+  .then(() => {
+    console.log('Connected to MongoDB successfully');
+    setUseInMemory(false); // Ensure we're using the database, not in-memory
   })
-    .then(() => {
-      console.log('Connected to MongoDB');
-    })
-    .catch(async err => {
-      console.error('MongoDB connection error:', err);
+  .catch(err => {
+    console.error('Initial MongoDB connection error:', err);
+    console.log('Will attempt to reconnect or fall back to in-memory storage');
+  });
+
+// Handle connection events for better monitoring and reconnection
+mongoose.connection.on('connected', () => {
+  console.log('Mongoose connected to MongoDB');
+  setUseInMemory(false);
+  // When connection is established, try to load users into memory as backup
+  loadUsersIntoMemoryBackup();
+  // If we were using in-memory storage, sync it back to MongoDB
+  syncInMemoryToMongoDB().then(result => {
+    if (result.synced > 0) {
+      console.log(`Synced ${result.synced} users from in-memory storage to MongoDB after connection restored`);
+    }
+  }).catch(err => {
+    console.error('Error syncing in-memory data to MongoDB:', err);
+  });
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('Mongoose connection error:', err);
+  if (err.name === 'MongoNetworkError' || err.name === 'MongoTimeoutError') {
+    console.log('Network error detected, will attempt to reconnect...');
+    // Connection will automatically retry 
+  }
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('Mongoose disconnected from MongoDB');
+  // Only switch to in-memory if disconnection persists
+  // The auto-reconnect will try to restore the connection
+});
+
+// Function to load users from MongoDB into memory as a backup
+async function loadUsersIntoMemoryBackup() {
+  try {
+    // Import the User model and verificationManager
+    const User = require('./models/User');
+    const { inMemoryStorage } = require('./utils/verificationManager');
+    
+    console.log('Loading all users from database into memory as backup...');
+    const users = await User.find({});
+    
+    if (users && users.length > 0) {
+      console.log(`Successfully loaded ${users.length} users from database`);
       
-      // Before activating in-memory storage, try to load existing users from database
-      try {
-        // Import the User model and verificationManager
-        const User = require('./models/User');
-        const { setUseInMemory } = require('./utils/verificationManager');
-        
-        // Try to load all users from the database
-        console.log('Attempting to load users from database before falling back to in-memory storage...');
-        const users = await User.find({});
-        
-        if (users && users.length > 0) {
-          console.log(`Successfully loaded ${users.length} users from database`);
-          
-          // Now load them into in-memory storage
-          const inMemoryStorage = require('./utils/verificationManager').inMemoryStorage;
-          if (inMemoryStorage) {
-            users.forEach(user => {
-              // Convert Mongoose document to plain object
-              const userObj = user.toObject();
-              inMemoryStorage.users.set(userObj.discordId, userObj);
-            });
-            console.log(`Loaded ${inMemoryStorage.users.size} users into in-memory storage`);
-          }
-        } else {
-          console.log('No users found in database');
-        }
-      } catch (loadError) {
-        console.error('Error loading users from database:', loadError);
-      }
+      // Load them into in-memory storage as backup
+      users.forEach(user => {
+        // Convert Mongoose document to plain object
+        const userObj = user.toObject();
+        inMemoryStorage.users.set(userObj.discordId, userObj);
+      });
       
-      console.log('Bot will continue with in-memory storage');
-      // Activate in-memory storage mode
-      setUseInMemory(true);
-    });
-} catch (error) {
-  console.error('Error setting up MongoDB:', error);
-  console.log('Bot will continue with in-memory storage');
-  // Activate in-memory storage mode
-  setUseInMemory(true);
+      console.log(`Loaded ${inMemoryStorage.users.size} users into in-memory backup storage`);
+    } else {
+      console.log('No users found in database to load into memory backup');
+    }
+  } catch (loadError) {
+    console.error('Error loading users from database into memory backup:', loadError);
+  }
 }
 
 // Set up commands
@@ -191,72 +220,93 @@ client.login(process.env.DISCORD_TOKEN);
 
 // Add this function at the end of the file
 const setupPeriodicNFTCheck = (client) => {
-  // Check NFT ownership every 24 hours
-  const ONE_DAY = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+  // Check NFT ownership for all users with the role every 24 hours
+  const ONE_DAY = 24 * 60 * 60 * 1000;
   
   async function checkAllUsersNFTOwnership() {
     try {
-      console.log('Running scheduled NFT ownership verification for all users...');
+      const guild = client.guilds.cache.get(process.env.GUILD_ID);
       
-      // Get the guild where the bot is operating
-      const guild = client.guilds.cache.first();
       if (!guild) {
-        console.error('Error: Guild not found for NFT ownership check');
+        console.error('Guild not found for periodic NFT check');
         return;
       }
       
-      // Get the role ID from environment variables
       const roleId = process.env.LIL_MONALIEN_ROLE_ID;
       if (!roleId) {
-        console.error('Error: LIL_MONALIEN_ROLE_ID not set in environment variables');
+        console.error('Role ID not configured for periodic NFT check');
         return;
       }
       
-      // Get all members with the NFT role
-      const role = guild.roles.cache.get(roleId);
-      if (!role) {
-        console.error(`Error: Role with ID ${roleId} not found`);
+      // Fetch all members with the role
+      const membersWithRole = await guild.members.fetch();
+      const membersWithRoleFiltered = membersWithRole.filter(member => 
+        member.roles.cache.has(roleId) && !member.user.bot
+      );
+      
+      console.log(`Checking NFT ownership for ${membersWithRoleFiltered.size} members with the role...`);
+      
+      // If no members have the role, nothing to do
+      if (membersWithRoleFiltered.size === 0) {
+        console.log('No members found with the role.');
         return;
       }
       
-      // Get members with the role
-      const membersWithRole = role.members;
-      console.log(`Found ${membersWithRole.size} members with the NFT role`);
-      
-      // Check each member's NFT status
       let roleRemovedCount = 0;
+      let errorCount = 0;
       
-      for (const [memberId, member] of membersWithRole) {
+      for (const [memberId, member] of membersWithRoleFiltered) {
         try {
           const { refreshNFTStatus } = require('./utils/verificationManager');
           const refreshResult = await refreshNFTStatus(memberId);
           
-          // If the user no longer has any NFTs, remove the role
-          if (!refreshResult.hasAnyNFT) {
-            console.log(`User ${member.user.tag} (${memberId}) no longer has NFTs. Removing role...`);
-            await member.roles.remove(roleId);
-            roleRemovedCount++;
+          // If checksFailed flag is set, this means all API checks failed
+          // In this case, we keep the current role state to avoid incorrectly removing roles
+          if (refreshResult.checksFailed) {
+            console.log(`API checks failed for ${member.user.tag} (${memberId}). Keeping current role.`);
+            continue;
           }
-        } catch (error) {
-          // Skip users that don't have wallets registered, etc.
-          if (error.message === 'User not found' || error.message === 'No verified wallets found') {
-            console.log(`User ${member.user.tag} (${memberId}) doesn't have verified wallets. Removing role...`);
+          
+          // Check if there was an error returned from the function
+          if (refreshResult.error) {
+            errorCount++;
+            
+            // If there's an error about no wallets, DO NOT remove role - keep it instead
+            if (refreshResult.error.includes('No linked wallets') || refreshResult.error.includes('No verified wallets')) {
+              console.log(`User ${member.user.tag} (${memberId}) ${refreshResult.error}. Keeping role as they likely got it another way.`);
+              continue; // Skip to next user, keeping their role
+            } else {
+              // For other errors, maintain the current role state
+              console.log(`Error for ${member.user.tag}: ${refreshResult.error}. Keeping role.`);
+              continue;
+            }
+          }
+          
+          // If the user no longer has any NFTs, remove the role
+          // ONLY do this if they have verified wallets and we confirmed no NFTs
+          if (!refreshResult.hasAnyNFT && refreshResult.wallets && refreshResult.wallets.length > 0) {
+            console.log(`User ${member.user.tag} (${memberId}) has verified wallets but no NFTs. Removing role...`);
             await member.roles.remove(roleId);
             roleRemovedCount++;
           } else {
-            console.error(`Error checking NFT status for user ${memberId}:`, error);
+            console.log(`User ${member.user.tag} (${memberId}) still has NFTs or no wallets to check. Keeping role.`);
           }
+        } catch (error) {
+          errorCount++;
+          // Do not remove role on unexpected errors
+          console.error(`Unexpected error checking NFT status for user ${memberId}:`, error);
+          console.log(`Keeping role for ${member.user.tag} due to unexpected error.`);
         }
       }
       
-      console.log(`Scheduled NFT check complete. Removed roles from ${roleRemovedCount} users.`);
+      console.log(`Scheduled NFT check complete. Removed roles from ${roleRemovedCount} users. Encountered ${errorCount} errors.`);
     } catch (error) {
       console.error('Error in scheduled NFT ownership check:', error);
     }
   }
   
-  // Run the check once at startup
-  setTimeout(checkAllUsersNFTOwnership, 60000); // 1 minute after startup
+  // Run the check once at startup, but with a delay to ensure database is connected
+  setTimeout(checkAllUsersNFTOwnership, 120000); // 2 minutes after startup
   
   // Then schedule it to run every 24 hours
   setInterval(checkAllUsersNFTOwnership, ONE_DAY);

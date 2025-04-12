@@ -4,8 +4,9 @@ const fetch = require('node-fetch');
 const API_KEY = process.env.BLOCKVISION_API_KEY;
 const NFT_CONTRACT_ADDRESS = process.env.NFT_CONTRACT_ADDRESS || '0xae280ca8dfaaf852b0af828cd72391ce7874fbb6';
 
-// Example wallet address - replace with a real one for testing
-const TEST_WALLET_ADDRESS = '0x290b7C691Ee1FB118120f43E1A24d68B45CB27FB';
+// Use the wallet address provided by the user
+const TEST_WALLET_ADDRESS = '0x348cd8f60c3482ba36fcc23317d16eb8cf64f135';
+// Previous test wallet: '0x290b7C691Ee1FB118120f43E1A24d68B45CB27FB';
 
 // Test NFT holdings endpoint
 const testNFTHoldings = async () => {
@@ -223,6 +224,19 @@ const testTransactions = async () => {
 const runTests = async () => {
   await testNFTHoldings();
   await testTransactions();
+  
+  // Test the actual NFT verification function used by the bot
+  console.log('\n------------------------------------------');
+  console.log('Testing the checkNFTHoldings function directly');
+  console.log('------------------------------------------');
+  const { checkNFTHoldings } = require('./blockVisionApi');
+  try {
+    console.log(`Checking if wallet ${TEST_WALLET_ADDRESS} holds a Lil Monaliens NFT...`);
+    const hasNFT = await checkNFTHoldings(TEST_WALLET_ADDRESS);
+    console.log(`\nRESULT: Wallet ${TEST_WALLET_ADDRESS} ${hasNFT ? 'HAS ✅' : 'DOES NOT HAVE ❌'} a Lil Monaliens NFT`);
+  } catch (error) {
+    console.error('Error testing checkNFTHoldings function:', error);
+  }
 };
 
 runTests(); 

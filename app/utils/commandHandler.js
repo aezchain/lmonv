@@ -200,6 +200,14 @@ module.exports = (client) => {
         const { refreshNFTStatus } = require('../utils/verificationManager');
         const refreshResult = await refreshNFTStatus(interaction.user.id);
         
+        // Check if there was an error returned from the function
+        if (refreshResult.error) {
+          return interaction.editReply({
+            content: `⚠️ ${refreshResult.error}`,
+            ephemeral: true
+          });
+        }
+        
         const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
         const embed = new EmbedBuilder()
           .setColor(refreshResult.hasAnyNFT ? 0x00FF00 : 0x0099FF)
@@ -347,6 +355,14 @@ async function handleWelcomeButtons(interaction, client) {
         // Call the refreshNFTStatus function directly
         const { refreshNFTStatus } = require('../utils/verificationManager');
         const refreshResult = await refreshNFTStatus(interaction.user.id);
+        
+        // Check if there was an error returned from the function
+        if (refreshResult.error) {
+          return interaction.editReply({
+            content: `⚠️ ${refreshResult.error}`,
+            ephemeral: true
+          });
+        }
         
         const { EmbedBuilder } = require('discord.js');
         const embed = new EmbedBuilder()

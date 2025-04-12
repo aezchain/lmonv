@@ -450,13 +450,25 @@ const refreshNFTStatus = async (discordId) => {
       user = inMemoryStorage.users.get(discordId);
       
       if (!user) {
-        throw new Error('User not found');
+        console.log(`No user found in memory with ID ${discordId}`);
+        return { 
+          wallets: [],
+          hasAnyNFT: false,
+          soldNFTs: [],
+          error: 'No linked wallets found. Please link a wallet first.'
+        };
       }
       
       verifiedWallets = user.wallets.filter(wallet => wallet.verified);
       
       if (verifiedWallets.length === 0) {
-        throw new Error('No verified wallets found');
+        console.log(`User ${discordId} has no verified wallets`);
+        return { 
+          wallets: [],
+          hasAnyNFT: false,
+          soldNFTs: [],
+          error: 'No verified wallets found. Please complete wallet verification first.'
+        };
       }
     } else {
       // Use MongoDB if available
@@ -465,13 +477,25 @@ const refreshNFTStatus = async (discordId) => {
         user = await User.findOne({ discordId });
         
         if (!user) {
-          throw new Error('User not found');
+          console.log(`No user found in database with ID ${discordId}`);
+          return { 
+            wallets: [],
+            hasAnyNFT: false,
+            soldNFTs: [],
+            error: 'No linked wallets found. Please link a wallet first.'
+          };
         }
         
         verifiedWallets = user.wallets.filter(wallet => wallet.verified);
         
         if (verifiedWallets.length === 0) {
-          throw new Error('No verified wallets found');
+          console.log(`User ${discordId} has no verified wallets in database`);
+          return { 
+            wallets: [],
+            hasAnyNFT: false,
+            soldNFTs: [],
+            error: 'No verified wallets found. Please complete wallet verification first.'
+          };
         }
       } catch (dbError) {
         console.error('MongoDB error, falling back to in-memory storage:', dbError);
@@ -484,6 +508,8 @@ const refreshNFTStatus = async (discordId) => {
     }
     
     let hasAnyNFT = false;
+    let checksFailed = 0; // Track how many NFT checks failed
+    const totalWallets = verifiedWallets.length;
     const soldNFTs = []; // Track wallets that previously had an NFT but now don't
     
     // Check NFT status for each wallet
@@ -494,15 +520,46 @@ const refreshNFTStatus = async (discordId) => {
         // Store previous NFT state
         const previouslyHadNFT = wallet.hasNFT;
         
-        // Check current NFT status
-        const hasNFT = await checkNFTHoldings(wallet.address);
-        wallet.hasNFT = hasNFT;
+        // Check current NFT status - with retry mechanism
+        let hasNFT = false;
+        let retryCount = 0;
+        const maxRetries = 3;
+        
+        while (retryCount < maxRetries) {
+          try {
+            hasNFT = await checkNFTHoldings(wallet.address);
+            break; // If successful, exit retry loop
+          } catch (retryError) {
+            console.error(`Error checking NFT holdings for ${wallet.address} (attempt ${retryCount + 1}):`, retryError);
+            retryCount++;
+            
+            if (retryCount < maxRetries) {
+              console.log(`Retrying NFT check for ${wallet.address}...`);
+              // Wait for 2 seconds before retrying
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+          }
+        }
+        
+        // If all retries failed, assume the previous state is still valid
+        if (retryCount >= maxRetries) {
+          console.log(`All NFT check retries failed for ${wallet.address}, keeping previous state: ${previouslyHadNFT}`);
+          hasNFT = previouslyHadNFT;
+          checksFailed++;
+        }
+        
+        // Only update hasNFT state if the check was successful
+        // If ALL checks fail for a user, we'll maintain their previous role state
+        if (retryCount < maxRetries) {
+          wallet.hasNFT = hasNFT;
+        }
         
         // Log results for debugging
         if (hasNFT) {
           console.log(`✅ NFT DETECTED for wallet ${wallet.address}`);
           hasAnyNFT = true;
-        } else {
+        } else if (retryCount < maxRetries) {
+          // Only log no NFT found if this wasn't a failed check (where we preserved previous state)
           console.log(`❌ NO NFT found for wallet ${wallet.address}`);
           
           // If they previously had an NFT but now don't, they likely sold it
@@ -517,7 +574,31 @@ const refreshNFTStatus = async (discordId) => {
         }
       } catch (error) {
         console.error(`Error checking NFT holdings for ${wallet.address}:`, error);
+        checksFailed++;
+        
+        // On error, maintain previous NFT state
+        if (wallet.hasNFT) {
+          hasAnyNFT = true;
+        }
       }
+    }
+    
+    // If all checks failed, return an error but maintain previous NFT status
+    if (checksFailed === totalWallets && totalWallets > 0) {
+      console.error(`All NFT checks failed for user ${discordId}, maintaining previous NFT status`);
+      
+      // Determine if user previously had any NFTs
+      const previouslyHadNFT = verifiedWallets.some(wallet => wallet.hasNFT);
+      
+      return {
+        wallets: verifiedWallets.map(wallet => ({
+          address: wallet.address,
+          hasNFT: wallet.hasNFT
+        })),
+        hasAnyNFT: previouslyHadNFT,
+        checksFailed: true,
+        error: "All NFT checks failed. Maintaining previous role state."
+      };
     }
     
     // Save updated wallet data if using MongoDB
@@ -537,10 +618,16 @@ const refreshNFTStatus = async (discordId) => {
         hasNFT: wallet.hasNFT
       })),
       hasAnyNFT,
-      soldNFTs  // Include information about sold NFTs
+      soldNFTs,  // Include information about sold NFTs
+      checksFailed: checksFailed > 0 // Flag if any checks failed
     };
   } catch (error) {
-    throw error;
+    console.error(`Error in refreshNFTStatus for user ${discordId}:`, error);
+    return {
+      wallets: [],
+      hasAnyNFT: true, // Default to true on error to avoid removing roles incorrectly
+      error: `Error checking NFT status: ${error.message}. Maintaining previous role state.`
+    };
   }
 };
 
@@ -640,6 +727,56 @@ const setUseInMemory = (value) => {
   return { usingInMemory: inMemoryStorage.isActive };
 };
 
+// Sync in-memory storage with MongoDB (used when MongoDB reconnects)
+const syncInMemoryToMongoDB = async () => {
+  try {
+    if (!inMemoryStorage.isActive || inMemoryStorage.users.size === 0) {
+      console.log('No in-memory data to sync to MongoDB or in-memory storage not active');
+      return { synced: 0 };
+    }
+    
+    console.log(`Attempting to sync ${inMemoryStorage.users.size} users from in-memory storage to MongoDB...`);
+    let syncedCount = 0;
+    
+    for (const [discordId, userData] of inMemoryStorage.users.entries()) {
+      try {
+        // Check if user exists in MongoDB
+        let user = await User.findOne({ discordId });
+        
+        if (user) {
+          // Update existing user
+          user.wallets = userData.wallets;
+          await user.save();
+        } else {
+          // Create new user
+          user = new User({
+            discordId,
+            wallets: userData.wallets
+          });
+          await user.save();
+        }
+        
+        syncedCount++;
+      } catch (userError) {
+        console.error(`Error syncing user ${discordId} to MongoDB:`, userError);
+      }
+    }
+    
+    console.log(`Successfully synced ${syncedCount} users to MongoDB`);
+    
+    // If all users were synced successfully, deactivate in-memory storage
+    if (syncedCount === inMemoryStorage.users.size) {
+      inMemoryStorage.isActive = false;
+      console.log('In-memory storage deactivated after successful sync to MongoDB');
+    }
+    
+    return { synced: syncedCount };
+  } catch (error) {
+    console.error('Error syncing in-memory storage to MongoDB:', error);
+    return { synced: 0, error: error.message };
+  }
+};
+
 module.exports = {
   startVerification,
   checkVerification,
@@ -649,5 +786,7 @@ module.exports = {
   generateRandomAmount,
   loadVerificationsToCache,
   detectMongoDBStatus,
-  setUseInMemory
+  setUseInMemory,
+  syncInMemoryToMongoDB,
+  inMemoryStorage
 }; 
