@@ -252,7 +252,6 @@ const setupPeriodicNFTCheck = (client) => {
         return;
       }
       
-      let roleRemovedCount = 0;
       let errorCount = 0;
       
       for (const [memberId, member] of membersWithRoleFiltered) {
@@ -260,46 +259,26 @@ const setupPeriodicNFTCheck = (client) => {
           const { refreshNFTStatus } = require('./utils/verificationManager');
           const refreshResult = await refreshNFTStatus(memberId);
           
-          // If checksFailed flag is set, this means all API checks failed
-          // In this case, we keep the current role state to avoid incorrectly removing roles
-          if (refreshResult.checksFailed) {
-            console.log(`API checks failed for ${member.user.tag} (${memberId}). Keeping current role.`);
-            continue;
-          }
-          
-          // Check if there was an error returned from the function
+          // Just log the NFT status for monitoring, but never remove roles
           if (refreshResult.error) {
             errorCount++;
-            
-            // If there's an error about no wallets, DO NOT remove role - keep it instead
-            if (refreshResult.error.includes('No linked wallets') || refreshResult.error.includes('No verified wallets')) {
-              console.log(`User ${member.user.tag} (${memberId}) ${refreshResult.error}. Keeping role as they likely got it another way.`);
-              continue; // Skip to next user, keeping their role
-            } else {
-              // For other errors, maintain the current role state
-              console.log(`Error for ${member.user.tag}: ${refreshResult.error}. Keeping role.`);
-              continue;
-            }
-          }
-          
-          // If the user no longer has any NFTs, remove the role
-          // ONLY do this if they have verified wallets and we confirmed no NFTs
-          if (!refreshResult.hasAnyNFT && refreshResult.wallets && refreshResult.wallets.length > 0) {
-            console.log(`User ${member.user.tag} (${memberId}) has verified wallets but no NFTs. Removing role...`);
-            await member.roles.remove(roleId);
-            roleRemovedCount++;
+            console.log(`Error for ${member.user.tag}: ${refreshResult.error}. No action taken.`);
+          } else if (refreshResult.hasAnyNFT) {
+            console.log(`User ${member.user.tag} (${memberId}) still has NFTs. Role kept.`);
+          } else if (!refreshResult.hasAnyNFT && refreshResult.wallets && refreshResult.wallets.length > 0) {
+            // Just log that user no longer has NFTs, but don't remove role
+            console.log(`User ${member.user.tag} (${memberId}) no longer has NFTs. No action taken.`);
           } else {
-            console.log(`User ${member.user.tag} (${memberId}) still has NFTs or no wallets to check. Keeping role.`);
+            console.log(`User ${member.user.tag} (${memberId}) status checked. No action taken.`);
           }
         } catch (error) {
           errorCount++;
-          // Do not remove role on unexpected errors
           console.error(`Unexpected error checking NFT status for user ${memberId}:`, error);
-          console.log(`Keeping role for ${member.user.tag} due to unexpected error.`);
+          console.log(`No action taken for ${member.user.tag} due to error.`);
         }
       }
       
-      console.log(`Scheduled NFT check complete. Removed roles from ${roleRemovedCount} users. Encountered ${errorCount} errors.`);
+      console.log(`Scheduled NFT check complete. Monitoring only (no role changes). Encountered ${errorCount} errors.`);
     } catch (error) {
       console.error('Error in scheduled NFT ownership check:', error);
     }
@@ -311,5 +290,5 @@ const setupPeriodicNFTCheck = (client) => {
   // Then schedule it to run every 24 hours
   setInterval(checkAllUsersNFTOwnership, ONE_DAY);
   
-  console.log('Scheduled NFT ownership verification set up (will run daily)');
+  console.log('Scheduled NFT ownership verification set up (will run daily, monitoring only)');
 }; 
